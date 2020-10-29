@@ -1,15 +1,18 @@
 # bot.py
 import os
+import random
 import re
-
+import string
 import pandas as pd
 import sqlite3
-
-from discord import utils, Activity, ActivityType
+from matplotlib import pyplot as plt
+from discord import Activity, ActivityType, File
 from dotenv import load_dotenv
 from discord.ext import commands
 
 # General settings
+from matplotlib.ticker import StrMethodFormatter
+
 COMMAND_PREFIX = "!"
 IGNORE_EXISTING_DB = True
 
@@ -25,16 +28,63 @@ disco = commands.Bot(command_prefix=COMMAND_PREFIX)
 # Create data storage
 sql_connection = None
 
-# Some helper lambdas
-guild_sql_table = lambda g: f"{g}".replace(" ", "_")
-
 # Constant column names
 user_id_col = "user_id"
 user_name_col = "user_name"
 game_col = "game"
 
+#######################
+# Some helper methods #
+#######################
+# Transform a guild name to its SQL table name
+guild_sql_table = lambda g: f"{g}".replace(" ", "_")
 
-# Listen to events
+
+# Plot a pandas series in a histogram
+def plot_hist(counts):
+    # First plot its unique values in a bar graph
+    ax = counts.plot.bar()
+
+    # Despine
+    ax.spines['right'].set_visible(False)
+    ax.spines['top'].set_visible(False)
+    ax.spines['left'].set_visible(False)
+
+    # Switch off ticks
+    ax.tick_params(axis="both", which="both", bottom="off", top="off", labelbottom="on", left="off", right="off",
+                   labelleft="on")
+
+    # Draw horizontal axis lines
+    vals = ax.get_yticks()
+    for tick in vals:
+        ax.axhline(y=tick, linestyle='dashed', alpha=0.4, color='#eeeeee', zorder=1)
+
+    # Set x-axis ticks and label
+    ax.set_xlabel("Games", labelpad=20, weight='bold', size=12)
+
+    # Set y-axis label
+    ax.set_ylabel("Registered", labelpad=50, weight='bold', size=12)
+
+    # Format y-axis label
+    ax.yaxis.set_major_formatter(StrMethodFormatter('{x:,g}'))
+
+    # Set the x-axes tick rotation
+    ax.tick_params(axis='x', rotation=0)
+
+    # Store as a figure to a random file for sending over discord
+    fig = ax.get_figure()
+    fn = ''.join(random.choice(string.ascii_lowercase) for _ in range(16)) + ".png"  # random filename
+    fn = os.path.join("db", fn)
+    fig.savefig(fn)
+
+    # Return the file such that it can be send and deleted
+    return fn
+
+
+####################
+# Listen to events #
+####################
+# When the bot is ready
 @disco.event
 async def on_ready():
     # Set status
@@ -71,7 +121,7 @@ async def on_ready():
 #####################
 # View someone's games
 @disco.command("view")
-async def view_games(ctx, user_name):
+async def view_games(ctx, user_name=None):
     # Get the channel in which the command was used
     channel = ctx.message.channel
 
@@ -92,8 +142,11 @@ async def view_games(ctx, user_name):
             # Get either the author's ID or the requested user ID
             if user_name == "me":
                 user_id = ctx.author.id
+                mssg = "These are the games you have registered and how many other people have them:\n"
             else:
                 user_id = [user.id for user in ctx.guild.members if user.name == user_name]
+                mssg = "These are all the games I know and how many people registered them to me:\n"
+
                 # If no user has this user name, send a message and return
                 if len(user_id) == 0:
                     await channel.send(f"It seems I cannot find {user_name} in this server. Did you spell it alright?")
@@ -109,7 +162,7 @@ async def view_games(ctx, user_name):
                     user_id = user_id[0]
 
             # Get the user's games
-            game_data = guild_df[guild_df[user_id_col] == str(user_id)]
+            game_data = guild_df[guild_df[user_id_col] == user_id]
             listed_games = list(game_data[game_col].values)
 
         # No user name was given, so we show a server summary
@@ -118,18 +171,32 @@ async def view_games(ctx, user_name):
             listed_games = list(guild_df[game_col].values)
 
         # Get the histogram of how popular these games are in the server
-        hist = guild_df[game_col].groupby(listed_games).count()
+        hist = guild_df[game_col].value_counts(sort=True, ascending=False)
 
-        # Wrap the game data in a pretty format
-        pass
+        # Only keep the counts of listed games
+        hist = hist.loc[listed_games]
 
-        # Send the message
-        pass
+        # Wrap the game data in a pretty figure
+        fn = plot_hist(hist)
+
+        # str_games = listed_games.copy()
+        # # length = max([len(g) for g in str_games])
+        # # str_games = [g.ljust(length, " ") for g in str_games]
+        # str_games = [str_g + ": " + "".join(["#"]*hist[g]) + f" ({hist[g]}/{n_members})"
+        #              for str_g, g in zip(str_games, listed_games)]
+        # mssg = mssg + "\n".join(str_games)
+
+        # Send the message and figure
+        await channel.send(mssg)
+        await channel.send(file=File(fn))
+
+        # Remove figure
+        os.remove(fn)
 
 
 # The add games command
 @disco.command("add")
-async def add_games(ctx, game_list=None):
+async def add_games(ctx, *, game_list=None):
     # Get the channel in which the command was used
     channel = ctx.message.channel
 
@@ -157,7 +224,7 @@ async def add_games(ctx, game_list=None):
         # Get the author, as a Member or User, and use its unique ID to get its game data (can be empty)
         author = ctx.author
         user_id = author.id
-        game_data = guild_df[guild_df[user_id_col] == str(user_id)]
+        game_data = guild_df[guild_df[user_id_col] == user_id]
 
         # Check which games are new to add
         to_add = []
@@ -176,7 +243,7 @@ async def add_games(ctx, game_list=None):
             guild_df = guild_df.append({user_id_col: user_id, user_name_col: user_name, game_col: g}, ignore_index=True)
 
         # Update SQL table
-        guild_df.to_sql(guild_sql_table(guild_name), sql_connection, if_exists="append", index=False)
+        guild_df.to_sql(guild_sql_table(guild_name), sql_connection, if_exists="replace", index=False)
 
         # Send a message back with the successful result, a bit contextual to those who were already added
         if len(to_add) == len(games):
@@ -192,7 +259,8 @@ async def add_games(ctx, game_list=None):
                 await channel.send(f'Done! I added some of these games, as some of these games were already stored for '
                                    f'you:\n{already_added}')
             else:
-                await channel.send(f'Done! I added {len(to_add)} new games, as {len(already_added)} were already added.')
+                await channel.send(
+                    f'Done! I added {len(to_add)} new games, as {len(already_added)} were already added.')
 
     # Set status
     await disco.change_presence(activity=Activity(type=ActivityType.listening, name="cyberspace"))
