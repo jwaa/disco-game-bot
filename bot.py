@@ -1,4 +1,10 @@
 # bot.py
+
+# TODO # - !help
+# TODO # - !whoplays
+# TODO # - !suggest
+# TODO # - message on errors
+
 import functools
 import os
 import random
@@ -41,16 +47,22 @@ discord_blue = "#7087E4"
 discord_gray = "#36393F"
 discord_white = "#FFFFFB"
 
+
 #######################
 # Some helper methods #
 #######################
 # Transform a guild name to its SQL table name
-guild_sql_table = lambda g: f"{g}".replace(" ", "_")
+def guild_sql_table(guild_name):
+    return f"{guild_name}".replace(" ", "_")
+
+
+# Text formatting
+def style(txt):
+    return f"```diff\n{txt}\n```"
 
 
 # Status decorator
 def status_update(func):
-
     @functools.wraps(func)  # Important to preserve name because `command` uses it
     async def wrapper(*args, **kwargs):
         if "ctx" in kwargs.keys():
@@ -149,15 +161,15 @@ async def get_games(ctx, user_name, n_games):
 
             # If no user has this user name, send a message and return
             if len(user_id) == 0:
-                await channel.send(f"It seems I cannot find {user_name} in this server. Did you spell it "
-                                   f"correctly?")
+                await channel.send(style(f"It seems I cannot find {user_name} in this server. Did you spell it "
+                                   f"correctly?"))
                 return None, None, None
 
             else:
                 if len(user_id) > 1:
                     # Multiple users have this name, which the bot handles by sending a message and pick the first
-                    await channel.send(f"It seems I found more people with the name {user_name} in this server. "
-                                       f"Sadly, I don't know how to handle this so I just pick the first one.")
+                    await channel.send(style(f"It seems I found more people with the name {user_name} in this server. "
+                                       f"Sadly, I don't know how to handle this so I just pick the first one."))
 
                 # We pick the first user with this user name
                 user_id = user_id[0]
@@ -178,16 +190,16 @@ async def get_games(ctx, user_name, n_games):
     # If we have no listed games for that user or server
     if len(listed_games) == 0:
         if user_name is None:
-            await channel.send(f"It seems nobody in this server registered any games yet. Be the first! You can do "
-                               f"so with !add, for example '!add pubg, minecraft'.")
+            await channel.send(style(f"It seems nobody in this server registered any games yet. Be the first! You can do "
+                               f"so with !add, for example '!add pubg, minecraft'."))
             return None, None, None
         elif user_name == "me":
-            await channel.send(f"It seems you did not register any games yet. You can do so with !add, for example "
-                               f"'!add pubg, minecraft'.")
+            await channel.send(style(f"It seems you did not register any games yet. You can do so with !add, for example "
+                               f"'!add pubg, minecraft'."))
             return None, None, None
         else:
-            await channel.send(f"It seems that {user_name} did not yet register any games with me. {user_name} can "
-                               f"do so for themself with !add, for example '!add pubg, minecraft'.")
+            await channel.send(style(f"It seems that {user_name} did not yet register any games with me. {user_name} can "
+                               f"do so for themself with !add, for example '!add pubg, minecraft'."))
             return None, None, None
 
     # Get the histogram of how popular these games are in the server
@@ -242,6 +254,14 @@ async def on_ready():
 @disco.command("view")
 @status_update
 async def view_games(ctx, user_name=None, show_n_games=10):
+    """ [<user_name>|me] [<N>] Shows the games for either the entire server or a single user.
+
+    This command will show a histogram of the games registered to me on the entire server ("!view") or a specific user
+    ("!view <user_name>"). You can also only request the top-N games for the entire server ("!view all <N>") or a
+    specific user ("!view <user_name> <N>"). As default N=10, showing only the top-10 games. If you want to view how
+    popular your own games are in the server you can use the shortcut "!view me".
+    """
+
     # Get the channel in which the command was used
     channel = ctx.message.channel
 
@@ -256,7 +276,7 @@ async def view_games(ctx, user_name=None, show_n_games=10):
     fn = plot_hist(hist)
 
     # Send the message and figure
-    await channel.send(content=mssg, file=File(fn))
+    await channel.send(content=style(mssg), file=File(fn))
 
     # Remove figure
     os.remove(fn)
@@ -266,6 +286,16 @@ async def view_games(ctx, user_name=None, show_n_games=10):
 @disco.command("list")
 @status_update
 async def list_games(ctx, user_name=None):
+    """ [<user_name>|me] Shows a list of games registered in the entire server of for a specific user
+
+    Prints a list of the games registered in the entire server ("!list") or for a specific user ("!list <user_name>").
+    If you want view the list of games you registered you can also type "!list me".
+
+    :param ctx:
+    :param user_name:
+    :return:
+    """
+
     # Get all of the (user's) games
     mssg, hist, _ = await get_games(ctx, user_name, n_games=854775807)
 
@@ -274,21 +304,20 @@ async def list_games(ctx, user_name=None):
         return
 
     # Print all games
-    game_list = "\n - ".join(list(hist.index.values))
-    game_list = "- " + game_list
+    game_list = "\n+ ".join(list(hist.index.values))
+    game_list = "+ " + game_list
 
     # Get the channel in which the command was used
     channel = ctx.message.channel
 
     # Send message
-    await channel.send(mssg + game_list)
+    await channel.send(style(mssg + game_list))
 
 
 # Remove someone's games
 @disco.command("remove")
 @status_update
 async def remove_games(ctx, *, game_list=None):
-
     # Get all of the user's games
     _, hist, user_id = await get_games(ctx, user_name="me", n_games=854775807)
     registered_games = list(hist.index.values)
@@ -313,7 +342,7 @@ async def remove_games(ctx, *, game_list=None):
 
     # If no games can be removed, we send a message and return
     if len(to_remove) == 0:
-        await channel.send(f"It seems none of these games are registered for you, so I cannot unregister them.")
+        await channel.send(style(f"It seems none of these games are registered for you, so I cannot unregister them."))
         return
 
     # Get this guilds/servers data
@@ -352,7 +381,7 @@ async def remove_games(ctx, *, game_list=None):
                f"To add them back, you can use: !add {add_list}"
 
     # Send message
-    await channel.send(mssg)
+    await channel.send(style(mssg))
 
 
 # The add games command
@@ -364,12 +393,13 @@ async def add_games(ctx, *, game_list=None):
 
     # If no games were provided send a help message
     if game_list is None:
-        await channel.send("If you want to add some games to your profile, you should tell me which. For example; "
-                           "'!add pubg, World of Warcraft, Minecraft'.")
+        await channel.send(style("If you want to add some games to your profile, you should tell me which. For example; "
+                           "'!add pubg, World of Warcraft, Minecraft'."))
         return
 
     # Get the accompanying game names (separated by comma's if there are more)
     games = re.split(", |,", game_list)
+    games = [g.title() for g in games]
 
     # Get the games data
     guild_name = ctx.guild.name
@@ -390,7 +420,7 @@ async def add_games(ctx, *, game_list=None):
 
     # If no games can be added, send a message with this result and be done
     if len(to_add) == 0:
-        await channel.send(f"It seems all of these games are already added to your list!")
+        await channel.send(style(f"It seems all of these games are already added to your list!"))
         return
 
     # If games need to be added, we do so
@@ -404,19 +434,19 @@ async def add_games(ctx, *, game_list=None):
     # Send a message back with the successful result, a bit contextual to those who were already added
     if len(to_add) == len(games):
         if len(to_add) > 1:
-            await channel.send('Done! I added these games to your profile.')
+            await channel.send(style('Done! I added these games to your profile.'))
         else:
-            await channel.send("Done! I added this game to your profile.")
+            await channel.send(style("Done! I added this game to your profile."))
     else:
         already_added = set(games).difference(set(to_add))
         if len(already_added) < 6:  # only list the added games if less then 6
             already_added = "\n- ".join([g for g in already_added])
             already_added = "- " + already_added
-            await channel.send(f'Done! I added some of these games, as some of these games were already stored for '
-                               f'you:\n{already_added}')
+            await channel.send(style(f'Done! I added some of these games, as some of these games were already stored '
+                                     f'for you:\n{already_added}'))
         else:
-            await channel.send(
-                f'Done! I added {len(to_add)} new games, as {len(already_added)} were already added.')
+            await channel.send(style(
+                f'Done! I added {len(to_add)} new games, as {len(already_added)} were already added.'))
 
 
 def run_bot(test_mode=False, reset_databases=False):
